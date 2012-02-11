@@ -1,0 +1,56 @@
+- creating an unencrypted ws server -
+
+    server = WebSocketServer.createServer(connectedCallback)
+
+
+
+- creating a wss server -
+
+    fs = require("fs");
+
+    var privateKey = fs.readFileSync('certificates/space.key').toString();
+    var certificate = fs.readFileSync('certificates/space.crt').toString();
+    var options = {'key': privateKey, 'cert': certificate};
+
+    server = WebSocketServer.createSecureServer(connectedCallback, options);
+
+
+
+- listening on a port -
+
+    server.listen(8000);
+
+
+
+- new connection callback -
+
+    connected = function(websocket)
+    {   
+        websocket.addListener("connect", connectEvent);
+        websocket.addListener("data", dataEvent);
+        websocket.addListener("close", closeEvent);
+        websocket.addListener("error", errorEvent);
+    }
+
+
+
+- socket events -
+
+on these events the keyword "this" is your interface to the websocket 
+
+    connectEvent = function() { }
+    dataEvent = function(data) {  }
+    closeEvent = function() { }
+    errorEvent = function(exception) { }
+
+
+
+- writing to the websocket -
+
+    websocket.write(data)
+
+
+
+- closing the websocket -
+
+    websocket.end()
