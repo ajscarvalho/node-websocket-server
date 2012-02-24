@@ -16,6 +16,7 @@ WebSocket.prototype.emitter = null;
 WebSocket.prototype.handshaked = false;
 WebSocket.prototype.buffer = "";
 WebSocket.prototype.version = null;
+WebSocket.prototype.socketClosing = false;
 
 WebSocket.prototype.init = function(serverInstance, socket)
 {
@@ -25,8 +26,8 @@ WebSocket.prototype.init = function(serverInstance, socket)
 
 	this.emitter.websocket = this;
 	this.emitter.write = function(data) { this.websocket.write(data); }
-	this.emitter.end = function() { this.socket.end(); }
-	
+	this.emitter.end = function() { this.websocket.end(); }
+
 	socket.addListener("data", this.processDataEvent.bind(this));
 	socket.addListener("end", this.processEndEvent.bind(this));
 	socket.addListener("close", this.processCloseEvent.bind(this));
@@ -74,7 +75,7 @@ WebSocket.prototype.draft10_write = function(data)
 		// Socket not open for writing,
 		// should get "close" event just before.
 console.log('closing due to exception writing: ', this.version, e);
-		try { this.socket.end(); } catch(e) { console.log('closing due to exception writing, error closing', this.version, e); }
+		try { this.end(); } catch(e) { console.log('closing due to exception writing, error closing', this.version, e); }
 	}
 };
 
@@ -86,7 +87,7 @@ WebSocket.prototype.old_write = function(data)
 		this.socket.write('\uffff', 'binary');
 	} catch(e) {
 console.log('closing due to exception writing: ', this.version, e);
-		try { this.socket.end(); } catch(e) { console.log('closing due to exception writing : ', this.version, e); }
+		try { this.end(); } catch(e) { console.log('closing due to exception writing : ', this.version, e); }
 	}
 };
 
@@ -98,7 +99,10 @@ console.log('closing due to exception writing: ', this.version, e);
 
 WebSocket.prototype.end = function()
 {
+	if (this.socketClosing) return console.log("called end on an already ended socket - nothing to do");
+	if (!this.socket.writable) return console.log("called end on an unwriteable socket - nothing to do");
 	try {
+		this.socketClosing = true;
 		if (this.version == 'draft10') return this.sendCloseFrame();
 		this.socket.end();
 	} catch(e) { console.log('error closing socket : ', this.version, e); }
@@ -107,7 +111,7 @@ WebSocket.prototype.end = function()
 
 WebSocket.prototype.sendCloseFrame = function()
 {
-//console.log('sending close frame');
+console.log('sending close frame');
 	var data = 'Server Application Requested close',
 		byteLen = Buffer.byteLength(data, 'utf8'),
 		packetHeader;
@@ -141,7 +145,7 @@ WebSocket.prototype.old_handle = function(binaryData)
 	var data = binaryData.toString("utf8");
 	this.buffer += data;
 
-	var chunks = buffer.split("\ufffd"), // TODO analyse split result
+	var chunks = this.buffer.split("\ufffd"), // TODO analyse split result
 	count = chunks.length - 1; // last is "" or a partial packet
 
 	for(var i = 0; i < count; i++) {
@@ -150,7 +154,7 @@ WebSocket.prototype.old_handle = function(binaryData)
 //console.log("emitting DATA", data, this.version);
 			this.emitter.emit("data", chunk.slice(1));
 		} else {
-			try { this.socket.end(); } finally {}
+			try { this.buffer = ""; this.end(); } catch(e) { console.log("exception reading (old-handle)", e) }
 			return;
 		}
 	}
@@ -197,8 +201,16 @@ WebSocket.prototype.draft10_handle = function(binaryData)
 		}
 
 //console.log(len, data.length, i);
-		frameData = data.slice(i, i+len);
-		data = data.slice(i+len);
+		var sliceEnd = i+len;
+		if (sliceEnd > data.length)
+		{
+			console.log('trying to slice a ', len, 'bytes slice from', i, 'to', i+len, 'on a', data.length, 'buffer: ', data);
+			sliceEnd = data.length -1;
+		} 
+
+		frameData = data.slice(i, sliceEnd);
+		data = data.slice(sliceEnd);
+
 //		if (data.length > i+len) {
 //			 moreData = true;
 //	frameLen = frameData.length; // original bug?
@@ -242,11 +254,11 @@ WebSocket.prototype.pong = function(data)
 WebSocket.prototype.closeReceived = function(data)
 {
 	try {
-//console.log('close received', data);
+console.log('close received', data);
 //console.log(getData_draft10(data));
 		this.emitter.emit('close');
 		this.socket.write(data, 'binary');// send close back
-		this.socket.end();
+		this.end();
 	} catch(e) { console.log("close Received Error", this.version, e); }
 }
 
@@ -267,13 +279,13 @@ WebSocket.prototype.processDataEvent = function(data)
 WebSocket.prototype.processEndEvent = function()
 {
 	try { 
-		if (this.socket.writable) this.socket.end(); 
+		if (this.socket.writable) this.end(); 
 	} catch(e) { console.log('error ending socket : ', this.version, e); }
 };
 
 WebSocket.prototype.processCloseEvent = function()
 {
-//console.log('addListener close (socket closed)', this.handshaked);
+console.log('addListener close (socket closed)', this.handshaked);
 	if (this.handshaked) { // don't emit close from policy-requests
 		this.emitter.emit("close");
 	}
@@ -281,7 +293,7 @@ WebSocket.prototype.processCloseEvent = function()
 
 WebSocket.prototype.processErrorEvent = function(exception)
 {
-//console.log('error');
+console.log('error');
 	if (this.emitter.listeners("error").length > 0) {
 		this.emitter.emit("error", exception);
 	} else {
@@ -327,7 +339,7 @@ WebSocket.prototype.handshake = function(data)
 	if ( /<policy-file-request.*>/.exec(_headers[0]) ) {
 //console.log("policy-file-request: ", _headers[0]);
 		this.socket.write(this.serverInstance.options.flashPolicy);
-		try { this.socket.end(); } catch(e) { console.log('error closing socket due to policy-file-request write error: ', this.version, e); }
+		try { this.end(); } catch(e) { console.log('error closing socket due to policy-file-request write error: ', this.version, e); }
 		return;
 	}
 
@@ -339,7 +351,7 @@ WebSocket.prototype.handshake = function(data)
 	if ( _headers[0].match(/^GET /) ) {
 		headers["get"] = _headers[0];
 	} else {
-		try { this.socket.end(); } catch(e) { console.log('expected a GET Header on handshake: ', this.version, e); }
+		try { this.end(); } catch(e) { console.log('expected a GET Header on handshake: ', this.version, e); }
 		return;
 	}
 
@@ -371,7 +383,7 @@ WebSocket.prototype.handshake = function(data)
 			data[header] = match;
 		} else if (this.version != 'draft10') {
 //console.log('required header not found', header);
-			try { this.socket.end(); } catch(e) { console.log("error terminating socket on required headers validation", this.version, e); }
+			try { this.end(); } catch(e) { console.log("error terminating socket on required headers validation", this.version, e); }
 			return;
 		}
 	}
@@ -421,31 +433,33 @@ WebSocket.prototype.draft76_handshake = function(headers, data, upgradeHead)
 		spaces2 = strkey2.replace(/[^\ ]/g, '').length;
 
 	if (spaces1 == 0 || spaces2 == 0 || numkey1 % spaces1 != 0 || numkey2 % spaces2 != 0) {
-		try { this.socket.end(); } catch(e) { console.log('error closing socket due draft76_handshake trouble: ', this.version, e); }
+		try { this.end(); } catch(e) { console.log('error closing socket due draft76_handshake trouble: ', this.version, e); }
 		return;
 	}
 
 	var hash = crypto.createHash('md5'),
-		key1 = WebsocketHelper.pack(parseInt(numkey1 / spaces1)),
-		key2 = WebsocketHelper.pack(parseInt(numkey2 / spaces2));
+		key1 = WebSocketHelper.pack(parseInt(numkey1 / spaces1)),
+		key2 = WebSocketHelper.pack(parseInt(numkey2 / spaces2));
 
 	hash.update(key1);
 	hash.update(key2);
 	hash.update(upgradeHead);
 
-	this.socket.write(WebsocketHelper.nano(Websocket.HANDSHAKE_TEMPLATE_76, {
-		protocol: wsProtocol,
+	var handshakeResponse = WebSocketHelper.nano(WebSocket.HANDSHAKE_TEMPLATE_76, {
+		protocol: this.serverInstance.protocol,
 		resource: data.get[1],
 		host:     data.host[1],
 		origin:   data.origin[1],
 		data:     hash.digest("binary")
-	}), "binary");
+	});
+//console.log("handshakeResponse for draft 76", handshakeResponse, this.serverInstance);
+	this.socket.write(handshakeResponse, "binary");
 };
 
 WebSocket.prototype.draft75_handshake = function(data)
 {
-	socket.write(WebsocketHelper.nano(Websocket.HANDSHAKE_TEMPLATE_75, {
-		protocol: wsProtocol,
+	this.socket.write(WebSocketHelper.nano(WebSocket.HANDSHAKE_TEMPLATE_75, {
+		protocol: this.serverInstance.protocol,
 		resource: data.get[1],
 		host:     data.host[1],
 		origin:   data.origin[1]

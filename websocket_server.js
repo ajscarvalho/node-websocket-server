@@ -16,6 +16,7 @@ WebSocketServer.createServer = function(callback, options)
 {
 	var server = new WebSocketServer(callback, options);
 	server.socket = net.createServer(server.newConnection.bind(server));
+	server.protocol = 'ws';
 	return server;
 }
 
@@ -23,6 +24,7 @@ WebSocketServer.createSecureServer = function(callback, options)
 {
 	var server = new WebSocketServer(callback, options);
 	server.socket = tls.createServer(this.options, server.newConnection.bind(server));
+	server.protocol = 'wss';
 	return server;
 }
 
@@ -30,6 +32,7 @@ WebSocketServer.createSecureServer = function(callback, options)
 WebSocketServer.prototype.newConnectionCallback = null;
 WebSocketServer.prototype.options = null;
 WebSocketServer.prototype.socket = null;
+WebSocketServer.prototype.protocol = null;
 
 WebSocketServer.prototype.init = function(callback, options)
 {
